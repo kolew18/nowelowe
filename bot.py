@@ -8,8 +8,8 @@ import time
 # ======================
 # TELEGRAM
 # ======================
-TOKEN = "8791690243:AAEz4AvTx-ZhSpsjgckR1RZ9hudymjWGxeA"
-CHAT_ID = "7212942537"
+TOKEN = "TU_WKLEJ_TOKEN"
+CHAT_ID = "TU_WKLEJ_CHAT_ID"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -22,25 +22,32 @@ def send_telegram(msg):
 signals_today = 0
 wins = 0
 losses = 0
-balance = 1000  # start kapitał
+balance = 1000
 last_signal_price = None
 last_signal_type = None
 
 # ======================
-# DATA
+# DATA (NAPRAWIONE)
 # ======================
 def get_data():
     df = yf.download("^N225", period="5d", interval="1h")
 
+    # 🔥 FIX NA BŁĄD PANDAS
+    df["Close"] = df["Close"].squeeze()
+    df["High"] = df["High"].squeeze()
+    df["Low"] = df["Low"].squeeze()
+
     df["EMA50"] = ta.trend.ema_indicator(df["Close"], window=50)
     df["EMA200"] = ta.trend.ema_indicator(df["Close"], window=200)
     df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
-    df["ATR"] = ta.volatility.average_true_range(df["High"], df["Low"], df["Close"], window=14)
+    df["ATR"] = ta.volatility.average_true_range(
+        df["High"], df["Low"], df["Close"], window=14
+    )
 
     return df.dropna()
 
 # ======================
-# CHECK RESULT (WIN/LOSS)
+# TRADE RESULT
 # ======================
 def check_trade_result(current_price):
     global wins, losses, balance, last_signal_price, last_signal_type
@@ -50,7 +57,6 @@ def check_trade_result(current_price):
 
     diff = current_price - last_signal_price
 
-    # uproszczona symulacja
     if last_signal_type == "BUY":
         if diff > 0:
             wins += 1
@@ -176,10 +182,11 @@ def run():
     check_signal(df)
 
 # ======================
-# SCHEDULE
+# SCHEDULE (UTC!)
 # ======================
 schedule.every(1).hours.do(run)
 
+# 🔥 dostosowane do PL czasu
 schedule.every().day.at("04:00").do(lambda: send_market_open(get_data()))
 schedule.every().day.at("20:00").do(lambda: send_market_close(get_data()))
 schedule.every().day.at("20:01").do(reset_daily_stats)
