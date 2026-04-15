@@ -8,8 +8,8 @@ import time
 # ======================
 # TELEGRAM
 # ======================
-TOKEN = "TU_WKLEJ_TOKEN"
-CHAT_ID = "TU_WKLEJ_CHAT_ID"
+TOKEN = "8791690243:AAEz4AvTx-ZhSpsjgckR1RZ9hudymjWGxeA"
+CHAT_ID = "7212942537"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -20,6 +20,11 @@ def send_telegram(msg):
 # GLOBAL
 # ======================
 signals_today = 0
+wins = 0
+losses = 0
+balance = 1000  # start kapitał
+last_signal_price = None
+last_signal_type = None
 
 # ======================
 # DATA
@@ -35,19 +40,56 @@ def get_data():
     return df.dropna()
 
 # ======================
+# CHECK RESULT (WIN/LOSS)
+# ======================
+def check_trade_result(current_price):
+    global wins, losses, balance, last_signal_price, last_signal_type
+
+    if last_signal_price is None:
+        return
+
+    diff = current_price - last_signal_price
+
+    # uproszczona symulacja
+    if last_signal_type == "BUY":
+        if diff > 0:
+            wins += 1
+            balance += 10
+        else:
+            losses += 1
+            balance -= 10
+
+    elif last_signal_type == "SELL":
+        if diff < 0:
+            wins += 1
+            balance += 10
+        else:
+            losses += 1
+            balance -= 10
+
+    last_signal_price = None
+    last_signal_type = None
+
+# ======================
 # SIGNAL
 # ======================
 def check_signal(df):
-    global signals_today
+    global signals_today, last_signal_price, last_signal_type
 
     last = df.iloc[-1]
+    price = round(last["Close"], 2)
+
+    check_trade_result(price)
 
     if last["EMA50"] > last["EMA200"] and last["RSI"] < 30:
         signals_today += 1
+        last_signal_price = price
+        last_signal_type = "BUY"
+
         msg = f"""
 🚀 BUY SIGNAL JP225
 
-💰 Cena: {round(last['Close'], 2)}
+💰 Cena: {price}
 📈 Trend: LONG
 📊 RSI: {round(last['RSI'], 2)}
 """
@@ -55,10 +97,13 @@ def check_signal(df):
 
     elif last["EMA50"] < last["EMA200"] and last["RSI"] > 70:
         signals_today += 1
+        last_signal_price = price
+        last_signal_type = "SELL"
+
         msg = f"""
 🔻 SELL SIGNAL JP225
 
-💰 Cena: {round(last['Close'], 2)}
+💰 Cena: {price}
 📉 Trend: SHORT
 📊 RSI: {round(last['RSI'], 2)}
 """
@@ -75,13 +120,13 @@ def send_market_open(df):
     atr = round(last["ATR"], 2)
 
     msg = f"""
-📊 Dzień dobry — start dnia JP225
+📊 START DNIA JP225
 
 💰 Cena: {price}
 📈 Trend: {trend}
 📊 ATR: {atr}
 
-🧠 Status: oczekiwanie na setup
+💼 Kapitał: {balance}
 """
     send_telegram(msg)
 
@@ -89,7 +134,7 @@ def send_market_open(df):
 # MARKET CLOSE
 # ======================
 def send_market_close(df):
-    global signals_today
+    global signals_today, wins, losses, balance
 
     last = df.iloc[-1]
 
@@ -97,16 +142,22 @@ def send_market_close(df):
     trend = "LONG" if last["EMA50"] > last["EMA200"] else "SHORT"
     atr = round(last["ATR"], 2)
 
-    msg = f"""
-📊 Koniec dnia JP225
+    total = wins + losses
+    winrate = round((wins / total) * 100, 2) if total > 0 else 0
 
-💰 Cena końcowa: {price}
+    msg = f"""
+📊 KONIEC DNIA JP225
+
+💰 Cena: {price}
 📈 Trend: {trend}
 📊 ATR: {atr}
 
-📊 Sygnały dziś: {signals_today}
+📊 Sygnały: {signals_today}
+✅ Win: {wins}
+❌ Loss: {losses}
+📈 Winrate: {winrate}%
 
-🧠 Status: dzień zakończony
+💼 Kapitał: {balance}
 """
     send_telegram(msg)
 
