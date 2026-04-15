@@ -180,9 +180,9 @@ def run():
 # ======================
 schedule.every(1).hours.do(run)
 
-schedule.every().day.at("06:00").do(lambda: send_market_open(get_data()))
-schedule.every().day.at("22:00").do(lambda: send_market_close(get_data()))
-schedule.every().day.at("22:01").do(reset_daily_stats)
+schedule.every().day.at("04:00").do(lambda: send_market_open(get_data()))
+schedule.every().day.at("20:00").do(lambda: send_market_close(get_data()))
+schedule.every().day.at("20:01").do(reset_daily_stats)
 
 # ======================
 # LOOP
