@@ -8,8 +8,8 @@ import time
 # ======================
 # TELEGRAM
 # ======================
-TOKEN = "TU_WKLEJ_TOKEN"
-CHAT_ID = "TU_WKLEJ_CHAT_ID"
+TOKEN = "8791690243:AAEz4AvTx-ZhSpsjgckR1RZ9hudymjWGxeA"
+CHAT_ID = "7212942537"
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
