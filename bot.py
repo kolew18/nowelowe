@@ -1,243 +1,141 @@
-# ============================================================
-# 🤖 Nikkei H4 Agent + JOURNAL (FINAL)
-# ============================================================
-
-import time
-import schedule
-import requests
-import pandas as pd
 import yfinance as yf
-import csv
-from datetime import datetime
-from ta.trend import EMAIndicator, MACD
+import pandas as pd
+import ta
+import requests
+import schedule
+import time
 
-TELEGRAM_TOKEN = "8791690243:AAEz4AvTx-ZhSpsjgckR1RZ9hudymjWGxeA"
-TELEGRAM_CHAT_ID = "7212942537"
+# ======================
+# TELEGRAM
+# ======================
+TOKEN = "TU_WKLEJ_TOKEN"
+CHAT_ID = "TU_WKLEJ_CHAT_ID"
 
-def send(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg}
+    requests.post(url, data=data)
 
+# ======================
+# GLOBAL
+# ======================
+signals_today = 0
 
-SYMBOL = "^N225"
-INTERVAL = "4h"
-LOOKBACK = "400d"
-
-EMA20, EMA50, EMA200 = 20, 50, 200
-
-ZONE_BUFFER = 0.001
-OVEREXTENDED_LIMIT = 0.015
-FLAG_ATR_RATIO = 0.8
-MIN_SCORE = 2
-
-
-# ================= DATA =================
-
+# ======================
+# DATA
+# ======================
 def get_data():
-    df = yf.download(SYMBOL, period=LOOKBACK, interval=INTERVAL)
+    df = yf.download("^N225", period="5d", interval="1h")
 
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-    df = df.astype(float)
-    df.dropna(inplace=True)
-
-    return df
-
-
-# ================= INDICATORS =================
-
-def indicators(df):
-
-    close = df["Close"]
-
-    df["EMA20"] = EMAIndicator(close, EMA20).ema_indicator()
-    df["EMA50"] = EMAIndicator(close, EMA50).ema_indicator()
-    df["EMA200"] = EMAIndicator(close, EMA200).ema_indicator()
-
-    macd = MACD(close)
-    df["MACD"] = macd.macd_diff()
-
-    df["ATR"] = (df["High"] - df["Low"]).rolling(20).mean()
-
-    df["HA_close"] = (df["Open"]+df["High"]+df["Low"]+df["Close"])/4
-    df["HA_open"] = df["HA_close"].shift(1)
-    df["HA"] = df["HA_close"] > df["HA_open"]
+    df["EMA50"] = ta.trend.ema_indicator(df["Close"], window=50)
+    df["EMA200"] = ta.trend.ema_indicator(df["Close"], window=200)
+    df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
+    df["ATR"] = ta.volatility.average_true_range(df["High"], df["Low"], df["Close"], window=14)
 
     return df.dropna()
 
+# ======================
+# SIGNAL
+# ======================
+def check_signal(df):
+    global signals_today
 
-# ================= LOGGER =================
+    last = df.iloc[-1]
 
-def log_trade(symbol, direction, entry, sl, tp1, tp2, score):
+    if last["EMA50"] > last["EMA200"] and last["RSI"] < 30:
+        signals_today += 1
+        msg = f"""
+🚀 BUY SIGNAL JP225
 
-    file = "trades.csv"
-    file_exists = False
+💰 Cena: {round(last['Close'], 2)}
+📈 Trend: LONG
+📊 RSI: {round(last['RSI'], 2)}
+"""
+        send_telegram(msg)
 
-    try:
-        with open(file, "r"):
-            file_exists = True
-    except:
-        file_exists = False
+    elif last["EMA50"] < last["EMA200"] and last["RSI"] > 70:
+        signals_today += 1
+        msg = f"""
+🔻 SELL SIGNAL JP225
 
-    with open(file, mode="a", newline="") as f:
-        writer = csv.writer(f)
+💰 Cena: {round(last['Close'], 2)}
+📉 Trend: SHORT
+📊 RSI: {round(last['RSI'], 2)}
+"""
+        send_telegram(msg)
 
-        if not file_exists:
-            writer.writerow([
-                "date", "symbol", "direction",
-                "entry", "sl", "tp1", "tp2", "score"
-            ])
+# ======================
+# MARKET OPEN
+# ======================
+def send_market_open(df):
+    last = df.iloc[-1]
 
-        writer.writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M"),
-            symbol,
-            direction,
-            round(entry, 2),
-            round(sl, 2),
-            round(tp1, 2),
-            round(tp2, 2),
-            score
-        ])
-
-
-# ================= FILTER =================
-
-def market_filter(df):
-
-    ema_now = df["EMA200"].iloc[-1]
-    ema_prev = df["EMA200"].iloc[-6]
-
-    slope = (ema_now - ema_prev) / ema_prev
-
-    if abs(slope) < 0.0002:
-        return None
-
-    return "LONG" if slope > 0 else "SHORT"
-
-
-# ================= SETUP =================
-
-def structure(df, d):
-    c = df.iloc[-1]
-    if d == "LONG":
-        return c["Close"] > c["EMA200"] and c["EMA50"] > c["EMA200"]
-    else:
-        return c["Close"] < c["EMA200"] and c["EMA50"] < c["EMA200"]
-
-
-def pullback(df):
-    for _, r in df.iloc[-7:-1].iterrows():
-        if abs(r["Low"] - r["EMA20"]) < r["EMA20"] * ZONE_BUFFER:
-            return True
-    return False
-
-
-def no_extreme(df):
-    lows = df["Low"].iloc[-6:-1]
-    return all(lows.iloc[i] >= lows.iloc[i-1] for i in range(1, len(lows)))
-
-
-def not_overextended(df):
-    c = df.iloc[-1]
-    dist = abs(c["Close"] - c["EMA20"]) / c["EMA20"]
-    return dist < OVEREXTENDED_LIMIT
-
-
-# ================= SCORE =================
-
-def score(df):
-
-    s = 0
-    h = df["MACD"]
-
-    if h.iloc[-1] > h.iloc[-2] > h.iloc[-3]:
-        s += 1
-
-    if h.iloc[-2] < h.iloc[-1] and h.iloc[-2] < h.iloc[-3]:
-        s += 1
-
-    rng = df["High"].iloc[-8:-1].max() - df["Low"].iloc[-8:-1].min()
-    atr = df["ATR"].iloc[-1]
-
-    if rng < atr * FLAG_ATR_RATIO:
-        s += 1
-
-    if df["HA"].iloc[-1] and df["HA"].iloc[-2]:
-        s += 1
-
-    return s
-
-
-# ================= LEVELS =================
-
-def levels(df, d):
-
-    c = df.iloc[-1]
-    price = c["Close"]
-    atr = c["ATR"]
-
-    high = df["High"].iloc[-6:-1].max()
-    low = df["Low"].iloc[-6:-1].min()
-
-    if d == "LONG":
-        return price, low, high, high + atr * 1.2
-    else:
-        return price, high, low, low - atr * 1.2
-
-
-# ================= MAIN =================
-
-def run():
-
-    df = get_data()
-    df = indicators(df)
-
-    d = market_filter(df)
-    if not d:
-        return
-
-    if not structure(df, d): return
-    if not pullback(df): return
-    if not no_extreme(df): return
-    if not not_overextended(df): return
-
-    sc = score(df)
-    if sc < MIN_SCORE:
-        return
-
-    entry, sl, tp1, tp2 = levels(df, d)
-
-    log_trade(SYMBOL, d, entry, sl, tp1, tp2, sc)
+    price = round(last["Close"], 2)
+    trend = "LONG" if last["EMA50"] > last["EMA200"] else "SHORT"
+    atr = round(last["ATR"], 2)
 
     msg = f"""
-NIKKEI H4
+📊 Dzień dobry — start dnia JP225
 
-{d}
-Score: {sc}/4
+💰 Cena: {price}
+📈 Trend: {trend}
+📊 ATR: {atr}
 
-ENTRY: {round(entry,2)}
-SL: {round(sl,2)}
-TP1: {round(tp1,2)}
-TP2: {round(tp2,2)}
+🧠 Status: oczekiwanie na setup
 """
+    send_telegram(msg)
 
-    send(msg)
+# ======================
+# MARKET CLOSE
+# ======================
+def send_market_close(df):
+    global signals_today
 
+    last = df.iloc[-1]
 
-# ================= LOOP =================
+    price = round(last["Close"], 2)
+    trend = "LONG" if last["EMA50"] > last["EMA200"] else "SHORT"
+    atr = round(last["ATR"], 2)
 
-if __name__ == "__main__":
+    msg = f"""
+📊 Koniec dnia JP225
 
-    run()
+💰 Cena końcowa: {price}
+📈 Trend: {trend}
+📊 ATR: {atr}
 
-    send("BOT DZIAŁA 🚀")
+📊 Sygnały dziś: {signals_today}
 
-    schedule.every().day.at("00:05").do(run)
-    schedule.every().day.at("04:05").do(run)
-    schedule.every().day.at("08:05").do(run)
-    schedule.every().day.at("12:05").do(run)
-    schedule.every().day.at("16:05").do(run)
-    schedule.every().day.at("20:05").do(run)
+🧠 Status: dzień zakończony
+"""
+    send_telegram(msg)
 
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+# ======================
+# RESET
+# ======================
+def reset_daily_stats():
+    global signals_today
+    signals_today = 0
+
+# ======================
+# MAIN LOOP
+# ======================
+def run():
+    df = get_data()
+    check_signal(df)
+
+# ======================
+# SCHEDULE
+# ======================
+schedule.every(1).hours.do(run)
+
+schedule.every().day.at("06:00").do(lambda: send_market_open(get_data()))
+schedule.every().day.at("22:00").do(lambda: send_market_close(get_data()))
+schedule.every().day.at("22:01").do(reset_daily_stats)
+
+# ======================
+# LOOP
+# ======================
+while True:
+    schedule.run_pending()
+    time.sleep(60)
