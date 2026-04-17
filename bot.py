@@ -197,3 +197,4 @@ schedule.every().day.at("20:01").do(reset_daily_stats)
 while True:
     schedule.run_pending()
     time.sleep(60)
+send_telegram("TEST START")
